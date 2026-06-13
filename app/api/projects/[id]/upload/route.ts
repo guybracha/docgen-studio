@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSessionUser, assertProjectOwner } from "@/lib/auth-helpers";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 
@@ -12,7 +13,13 @@ const IS_VERCEL = process.env.VERCEL === "1";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const { id: projectId } = await params;
+    const { error } = await assertProjectOwner(projectId, user.id!);
+    if (error) return error;
+
     const formData = await req.formData();
     const created = [];
 
@@ -22,38 +29,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
       const mimeType = file.type || "application/octet-stream";
-
       if (!IMAGE_TYPES.has(mimeType)) continue;
 
       const bytes = await file.arrayBuffer();
       const buffer = Buffer.from(bytes);
 
       let fileUrl: string;
-
       if (IS_VERCEL) {
-        // On Vercel: store as base64 data URL (no filesystem access)
-        const base64 = buffer.toString("base64");
-        fileUrl = `data:${mimeType};base64,${base64}`;
+        // Vercel: no persistent filesystem — store as base64 data URL
+        fileUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
       } else {
-        // Local dev: save to public/uploads/
-        const uploadDir = path.join(process.cwd(), "public", "uploads", projectId);
+        // Local dev: store under public/uploads/[userId]/[projectId]/
+        const uploadDir = path.join(process.cwd(), "public", "uploads", user.id!, projectId);
         await mkdir(uploadDir, { recursive: true });
         const safeName = file.name.replace(/[^a-zA-Z0-9._\-]/g, "_");
         const fileName = `${Date.now()}_${safeName}`;
-        const filePath = path.join(uploadDir, fileName);
-        await writeFile(filePath, buffer);
-        fileUrl = `/uploads/${projectId}/${fileName}`;
+        await writeFile(path.join(uploadDir, fileName), buffer);
+        fileUrl = `/uploads/${user.id}/${projectId}/${fileName}`;
       }
 
       const doc = await prisma.document.create({
-        data: {
-          name: file.name,
-          path: relativePath,
-          content: "",
-          mimeType,
-          fileUrl,
-          projectId,
-        },
+        data: { name: file.name, path: relativePath, content: "", mimeType, fileUrl, projectId },
       });
       created.push(doc);
     }

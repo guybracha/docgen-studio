@@ -5,8 +5,9 @@ import Image from "next/image";
 import {
   ArrowRight, Plus, Folder, FileText, Trash2, Upload,
   Sparkles, Download, ChevronRight, ChevronDown, X, Save,
-  ImageIcon, ExternalLink,
+  ImageIcon, ExternalLink, LogOut,
 } from "lucide-react";
+import { signOut } from "next-auth/react";
 import dynamic from "next/dynamic";
 
 const Editor = dynamic(() => import("@/components/Editor"), { ssr: false });
@@ -334,6 +335,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-violet-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:opacity-90 transition"
         >
           <Sparkles size={15} /> ייצר עם AI
+        </button>
+        <button
+          onClick={() => signOut({ callbackUrl: "/auth/login" })}
+          className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm px-3 py-2 rounded-xl hover:bg-gray-100 transition"
+          title="יציאה"
+        >
+          <LogOut size={15} />
         </button>
       </header>
 

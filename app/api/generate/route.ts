@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSessionUser, assertProjectOwner } from "@/lib/auth-helpers";
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { projectId, type, prompt: userPrompt, docIds } = await req.json();
+
+  const { error } = await assertProjectOwner(projectId, user.id!);
+  if (error) return error;
 
   const docs = await prisma.document.findMany({
     where: { projectId, ...(docIds?.length ? { id: { in: docIds } } : {}) },
@@ -16,6 +23,7 @@ export async function POST(req: Request) {
   }
 
   const context = docs
+    .filter((d) => !d.fileUrl?.startsWith("data:"))
     .map((d) => `=== ${d.path} ===\n${d.content}`)
     .join("\n\n");
 
@@ -42,6 +50,5 @@ export async function POST(req: Request) {
   });
 
   const content = message.content[0].type === "text" ? message.content[0].text : "";
-
   return NextResponse.json({ content, type });
 }

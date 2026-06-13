@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FolderOpen, Plus, Trash2, FileText } from "lucide-react";
+import { useSession, signOut } from "next-auth/react";
+import { FolderOpen, Plus, Trash2, FileText, LogOut, User } from "lucide-react";
 
 interface Project {
   id: string;
@@ -12,6 +13,7 @@ interface Project {
 }
 
 export default function Home() {
+  const { data: session } = useSession();
   const [projects, setProjects] = useState<Project[]>([]);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -45,11 +47,38 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
       <div className="max-w-5xl mx-auto px-6 py-12">
-        <div className="mb-10 text-center">
-          <h1 className="text-4xl font-bold text-white mb-2">DocGen Studio</h1>
-          <p className="text-blue-300 text-lg">יצירת מסמכים, דוחות ומצגות בכוח AI</p>
+        {/* Header */}
+        <div className="mb-10 flex items-center justify-between">
+          <div>
+            <h1 className="text-4xl font-bold text-white mb-1">DocGen Studio</h1>
+            <p className="text-blue-300">יצירת מסמכים, דוחות ומצגות בכוח AI</p>
+          </div>
+          {session?.user && (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2">
+                {session.user.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={session.user.image} alt="" className="w-7 h-7 rounded-full" />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center">
+                    <User size={14} className="text-white" />
+                  </div>
+                )}
+                <span className="text-white text-sm font-medium">
+                  {session.user.name ?? session.user.email}
+                </span>
+              </div>
+              <button
+                onClick={() => signOut({ callbackUrl: "/auth/login" })}
+                className="flex items-center gap-1.5 text-blue-300 hover:text-white transition text-sm px-3 py-2 rounded-xl hover:bg-white/10"
+              >
+                <LogOut size={15} /> יציאה
+              </button>
+            </div>
+          )}
         </div>
 
+        {/* New Project Button */}
         <div className="mb-8 flex justify-end">
           <button
             onClick={() => setCreating(true)}
@@ -59,6 +88,7 @@ export default function Home() {
           </button>
         </div>
 
+        {/* Create Modal */}
         {creating && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
             <form onSubmit={create} className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl">
@@ -86,6 +116,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* Projects Grid */}
         {projects.length === 0 ? (
           <div className="text-center py-20 text-blue-300">
             <FolderOpen size={48} className="mx-auto mb-4 opacity-50" />
