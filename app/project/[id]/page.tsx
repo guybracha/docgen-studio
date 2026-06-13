@@ -1,11 +1,10 @@
 "use client";
-import { useEffect, useState, useCallback, use } from "react";
+import { useEffect, useState, useCallback, use, useRef } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import {
   ArrowRight, Plus, Folder, FileText, Trash2, Upload,
   Sparkles, Download, ChevronRight, ChevronDown, X, Save,
-  ImageIcon, ExternalLink, LogOut, FileArchive,
+  ImageIcon, ExternalLink, LogOut, FileArchive, Image as ImageIcon2,
 } from "lucide-react";
 import { signOut } from "next-auth/react";
 import dynamic from "next/dynamic";
@@ -92,8 +91,13 @@ function buildTree(docs: Document[]): TreeNode[] {
   return root;
 }
 
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+function isDocx(mimeType: string) { return mimeType === DOCX_MIME; }
+function isEditableBinary(doc: Document) { return isDocx(doc.mimeType) && !!doc.content?.trim(); }
+
 function FileIcon({ doc }: { doc: Document }) {
   if (isImage(doc.mimeType)) return <ImageIcon size={13} className="shrink-0 text-purple-500" />;
+  if (isDocx(doc.mimeType)) return <FileText size={13} className="shrink-0 text-blue-600" />;
   if (isBinary(doc.mimeType)) return <FileArchive size={13} className="shrink-0 text-blue-400" />;
   return <FileText size={13} className="shrink-0" />;
 }
@@ -217,6 +221,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [newDocPath, setNewDocPath] = useState("");
   const [showNewDoc, setShowNewDoc] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+  const [genProgress, setGenProgress] = useState(0);
+  const infographicRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() =>
     fetch(`/api/projects/${id}`).then((r) => r.json()).then(setProject),
@@ -295,17 +302,82 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     e.target.value = "";
   };
 
+  // Estimated max chars per type for progress calculation
+  const EST_MAX: Record<string, number> = {
+    report: 6000, presentation: 3000, spreadsheet: 2000, infographic: 5000, summary: 1500,
+  };
+
   const generate = async () => {
     setGenerating(true);
     setGeneratedContent(null);
+    setGenProgress(0);
+    const docIds = selectedDocIds.size > 0 ? Array.from(selectedDocIds) : undefined;
+
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: id, type: genType, prompt: genPrompt }),
+      body: JSON.stringify({ projectId: id, type: genType, prompt: genPrompt, docIds }),
     });
-    const data = await res.json();
-    setGeneratedContent(data);
+
+    if (!res.ok) {
+      const data = await res.json();
+      setGeneratedContent({ content: `שגיאה: ${data.error}`, type: "error" });
+      setGenerating(false);
+      setGenProgress(0);
+      return;
+    }
+
+    const type = res.headers.get("X-Gen-Type") ?? genType;
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let content = "";
+    const estMax = EST_MAX[type] ?? 4000;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      content += decoder.decode(value, { stream: true });
+      setGenProgress(Math.min(95, Math.round((content.length / estMax) * 100)));
+      setGeneratedContent({ content, type });
+    }
+
+    setGenProgress(100);
     setGenerating(false);
+  };
+
+  const exportDocx = async () => {
+    if (!selectedDoc) return;
+    const res = await fetch("/api/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format: "docx", content: selectedDoc.content, title: selectedDoc.name }),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = selectedDoc.name.replace(/\.docx$/i, "") + ".docx";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportPng = async () => {
+    if (!infographicRef.current) return;
+    const { toPng } = await import("html-to-image");
+    const dataUrl = await toPng(infographicRef.current, { cacheBust: true, pixelRatio: 2 });
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `${project?.name ?? "infographic"}.png`;
+    a.click();
+  };
+
+  const toggleDocSelection = (docId: string) => {
+    setSelectedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
   };
 
   const exportFile = async (format: string) => {
@@ -431,16 +503,43 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <>
               <div className="bg-white border-b border-gray-200 px-4 py-2 text-sm text-gray-500 flex items-center gap-1">
                 {isImage(selectedDoc.mimeType) && <ImageIcon size={14} className="text-purple-500 ml-1" />}
-                {selectedDoc.path.split("/").map((p, i, arr) => (
-                  <span key={i} className="flex items-center gap-1">
-                    {i > 0 && <ChevronRight size={12} className="text-gray-300" />}
-                    <span className={i === arr.length - 1 ? "text-gray-800 font-medium" : ""}>{p}</span>
-                  </span>
-                ))}
+                {isDocx(selectedDoc.mimeType) && <FileText size={14} className="text-blue-600 ml-1" />}
+                <span className="flex-1 flex items-center gap-1">
+                  {selectedDoc.path.split("/").map((p, i, arr) => (
+                    <span key={i} className="flex items-center gap-1">
+                      {i > 0 && <ChevronRight size={12} className="text-gray-300" />}
+                      <span className={i === arr.length - 1 ? "text-gray-800 font-medium" : ""}>{p}</span>
+                    </span>
+                  ))}
+                </span>
+                {isEditableBinary(selectedDoc) && (
+                  <button
+                    onClick={exportDocx}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100 transition"
+                  >
+                    <Download size={12} /> ייצא DOCX
+                  </button>
+                )}
+                {isDocx(selectedDoc.mimeType) && selectedDoc.fileUrl && (
+                  <a
+                    href={selectedDoc.fileUrl}
+                    download={selectedDoc.name}
+                    className="flex items-center gap-1.5 text-xs text-gray-500 hover:bg-gray-100 px-2.5 py-1 rounded-lg border border-gray-100 transition"
+                  >
+                    <Download size={12} /> מקור
+                  </a>
+                )}
               </div>
               <div className="flex-1 overflow-hidden flex flex-col">
                 {isImage(selectedDoc.mimeType) && selectedDoc.fileUrl ? (
                   <ImageViewer doc={selectedDoc} />
+                ) : isEditableBinary(selectedDoc) ? (
+                  // DOCX with extracted content — editable in TipTap
+                  <Editor
+                    key={selectedDoc.id}
+                    initialContent={selectedDoc.content}
+                    onSave={saveDoc}
+                  />
                 ) : isBinary(selectedDoc.mimeType) ? (
                   <BinaryViewer doc={selectedDoc} />
                 ) : (
@@ -505,9 +604,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <div className="p-5 space-y-4">
+              {/* Output type */}
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-2">סוג הפלט</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2 md:grid-cols-5">
                   {(Object.keys(genTypeLabels) as OutputType[]).map((t) => (
                     <button
                       key={t}
@@ -522,30 +622,110 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 </div>
               </div>
 
+              {/* Document selection */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-700">
+                    מסמכי מקור
+                    <span className="text-xs text-gray-400 font-normal mr-1">
+                      ({selectedDocIds.size === 0 ? "כל המסמכים" : `${selectedDocIds.size} נבחרו`})
+                    </span>
+                  </label>
+                  {selectedDocIds.size > 0 && (
+                    <button
+                      onClick={() => setSelectedDocIds(new Set())}
+                      className="text-xs text-blue-500 hover:text-blue-700"
+                    >
+                      נקה בחירה
+                    </button>
+                  )}
+                </div>
+                <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100 max-h-44 overflow-y-auto">
+                  {project?.documents.length === 0 ? (
+                    <p className="text-xs text-gray-400 p-3 text-center">אין מסמכים בפרויקט</p>
+                  ) : (
+                    project?.documents.map((doc) => {
+                      const hasText = !!doc.content?.trim();
+                      const img = isImage(doc.mimeType);
+                      const bin = isBinary(doc.mimeType) && !hasText;
+                      const usable = hasText && !img && !bin;
+                      const checked = selectedDocIds.has(doc.id);
+                      return (
+                        <label
+                          key={doc.id}
+                          className={`flex items-center gap-3 px-3 py-2 cursor-pointer text-sm transition ${
+                            usable ? "hover:bg-gray-50" : "opacity-50 cursor-not-allowed bg-gray-50"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={!usable}
+                            checked={checked}
+                            onChange={() => usable && toggleDocSelection(doc.id)}
+                            className="rounded"
+                          />
+                          <span className="flex-1 truncate text-gray-700">{doc.name}</span>
+                          {!usable && (
+                            <span className="text-xs text-gray-400 shrink-0">
+                              {bin || img ? "קובץ בינארי" : "ריק"}
+                            </span>
+                          )}
+                          {usable && (
+                            <span className="text-xs text-emerald-500 shrink-0">
+                              {doc.content.length.toLocaleString()} תווים
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                {project?.documents.every((d) => !d.content?.trim() || isBinary(d.mimeType) || isImage(d.mimeType)) && (
+                  <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                    ⚠️ אין מסמכי טקסט בפרויקט. הוסף מסמכי טקסט (txt, md, csv וכו׳) כדי שה-AI יוכל לעבוד עליהם.
+                  </p>
+                )}
+              </div>
+
+              {/* Extra instructions */}
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-2">הוראות נוספות (אופציונלי)</label>
                 <textarea
                   value={genPrompt}
                   onChange={(e) => setGenPrompt(e.target.value)}
-                  rows={3}
+                  rows={2}
                   placeholder={`לדוגמה: "צור ${genTypeLabels[genType]} מפורט שמתמקד בנתוני המכירות..."`}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
 
-              <button
-                onClick={generate}
-                disabled={generating}
-                className="w-full py-3 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {generating ? (
-                  <><span className="animate-spin">⏳</span> מייצר...</>
-                ) : (
-                  <><Sparkles size={16} /> ייצר {genTypeLabels[genType]}</>
+              <div className="space-y-2">
+                <button
+                  onClick={generate}
+                  disabled={generating}
+                  className="w-full py-3 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {generating ? (
+                    <><span className="animate-spin inline-block">⏳</span> מייצר... {genProgress}%</>
+                  ) : (
+                    <><Sparkles size={16} /> ייצר {genTypeLabels[genType]}</>
+                  )}
+                </button>
+                {generating && (
+                  <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="h-2 bg-gradient-to-r from-blue-500 to-violet-500 rounded-full transition-all duration-300"
+                      style={{ width: `${genProgress}%` }}
+                    />
+                  </div>
                 )}
-              </button>
+              </div>
 
-              {generatedContent && (
+              {generatedContent && generatedContent.type === "error" ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+                  {generatedContent.content}
+                </div>
+              ) : generatedContent && (
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
                   <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b border-gray-200">
                     <span className="text-sm font-medium text-gray-600">תוצאה</span>
@@ -560,19 +740,21 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                           <Download size={12} /> Excel
                         </button>
                       )}
-                      {genType === "infographic" && (
-                        <button onClick={() => exportFile("html")} className="flex items-center gap-1 text-xs text-orange-600 hover:bg-orange-50 px-2 py-1 rounded-lg">
-                          <Download size={12} /> HTML
+                      {genType === "infographic" && !generating && (
+                        <button onClick={exportPng} className="flex items-center gap-1 text-xs text-violet-600 hover:bg-violet-50 px-2 py-1 rounded-lg font-medium">
+                          <Download size={12} /> PNG
                         </button>
                       )}
                     </div>
                   </div>
                   {genType === "infographic" ? (
-                    <iframe
-                      srcDoc={generatedContent.content}
-                      className="w-full h-64 border-0"
-                      sandbox="allow-scripts"
-                    />
+                    <div className="overflow-auto bg-white">
+                      <div
+                        ref={infographicRef}
+                        className="min-w-[900px]"
+                        dangerouslySetInnerHTML={{ __html: generatedContent.content }}
+                      />
+                    </div>
                   ) : (
                     <pre className="p-4 text-xs whitespace-pre-wrap text-gray-700 max-h-60 overflow-y-auto font-mono">
                       {generatedContent.content}

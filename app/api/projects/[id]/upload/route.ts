@@ -9,20 +9,31 @@ const IMAGE_TYPES = new Set([
   "image/webp", "image/svg+xml", "image/bmp", "image/tiff",
 ]);
 
-// Binary files that should be stored as files, not parsed as text
+const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
 const BINARY_TYPES = new Set([
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",       // xlsx
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // pptx
-  "application/msword",        // doc
-  "application/vnd.ms-excel",  // xls
-  "application/vnd.ms-powerpoint", // ppt
+  DOCX_TYPE,
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
   "application/pdf",
   "application/zip",
   "application/octet-stream",
 ]);
 
 const IS_VERCEL = process.env.VERCEL === "1";
+
+async function extractDocxContent(buffer: Buffer): Promise<string> {
+  try {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.convertToHtml({ buffer });
+    return result.value ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -49,10 +60,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       let fileUrl: string;
       if (IS_VERCEL) {
-        // Vercel: no persistent filesystem — store as base64 data URL
         fileUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
       } else {
-        // Local dev: store under public/uploads/[userId]/[projectId]/
         const uploadDir = path.join(process.cwd(), "public", "uploads", user.id!, projectId);
         await mkdir(uploadDir, { recursive: true });
         const safeName = file.name.replace(/[^a-zA-Z0-9._\-]/g, "_");
@@ -61,8 +70,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fileUrl = `/uploads/${user.id}/${projectId}/${fileName}`;
       }
 
+      // Extract editable HTML content from DOCX files
+      const content = mimeType === DOCX_TYPE ? await extractDocxContent(buffer) : "";
+
       const doc = await prisma.document.create({
-        data: { name: file.name, path: relativePath, content: "", mimeType, fileUrl, projectId },
+        data: { name: file.name, path: relativePath, content, mimeType, fileUrl, projectId },
       });
       created.push(doc);
     }
