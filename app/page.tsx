@@ -18,7 +18,10 @@ export default function Home() {
   const [desc, setDesc] = useState("");
 
   const load = () =>
-    fetch("/api/projects").then((r) => r.json()).then(setProjects);
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((data) => setProjects(Array.isArray(data) ? data : []))
+      .catch(() => setProjects([]));
 
   useEffect(() => { load(); }, []);
 
