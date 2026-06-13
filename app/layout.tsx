@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="he" dir="rtl" className={`${geist.variable} h-full`}>
       <body className="min-h-full bg-gray-50 text-gray-900 antialiased">
         <SessionProvider>{children}</SessionProvider>
+        <Analytics />
       </body>
     </html>
   );
