@@ -5,7 +5,7 @@ import Image from "next/image";
 import {
   ArrowRight, Plus, Folder, FileText, Trash2, Upload,
   Sparkles, Download, ChevronRight, ChevronDown, X, Save,
-  ImageIcon, ExternalLink, LogOut,
+  ImageIcon, ExternalLink, LogOut, FileArchive,
 } from "lucide-react";
 import { signOut } from "next-auth/react";
 import dynamic from "next/dynamic";
@@ -17,9 +17,31 @@ const IMAGE_TYPES = new Set([
   "image/webp", "image/svg+xml", "image/bmp", "image/tiff",
 ]);
 
-function isImage(mimeType: string) {
-  return IMAGE_TYPES.has(mimeType);
-}
+const BINARY_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/pdf",
+  "application/zip",
+  "application/octet-stream",
+]);
+
+function isImage(mimeType: string) { return IMAGE_TYPES.has(mimeType); }
+function isBinary(mimeType: string) { return BINARY_TYPES.has(mimeType); }
+
+const MIME_LABELS: Record<string, string> = {
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "Word (.docx)",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Excel (.xlsx)",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "PowerPoint (.pptx)",
+  "application/msword": "Word (.doc)",
+  "application/vnd.ms-excel": "Excel (.xls)",
+  "application/vnd.ms-powerpoint": "PowerPoint (.ppt)",
+  "application/pdf": "PDF",
+  "application/zip": "ZIP",
+};
 
 interface Document {
   id: string;
@@ -72,6 +94,7 @@ function buildTree(docs: Document[]): TreeNode[] {
 
 function FileIcon({ doc }: { doc: Document }) {
   if (isImage(doc.mimeType)) return <ImageIcon size={13} className="shrink-0 text-purple-500" />;
+  if (isBinary(doc.mimeType)) return <FileArchive size={13} className="shrink-0 text-blue-400" />;
   return <FileText size={13} className="shrink-0" />;
 }
 
@@ -154,6 +177,30 @@ function ImageViewer({ doc }: { doc: Document }) {
   );
 }
 
+function BinaryViewer({ doc }: { doc: Document }) {
+  const label = MIME_LABELS[doc.mimeType] ?? doc.mimeType;
+  return (
+    <div className="flex-1 flex items-center justify-center bg-gray-50">
+      <div className="text-center bg-white rounded-2xl shadow-sm p-10 max-w-sm w-full border border-gray-100">
+        <FileArchive size={52} className="mx-auto mb-4 text-blue-400" />
+        <p className="font-semibold text-gray-800 mb-1 text-lg truncate">{doc.name}</p>
+        <p className="text-sm text-gray-400 mb-6">{label}</p>
+        {doc.fileUrl ? (
+          <a
+            href={doc.fileUrl}
+            download={doc.name}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition"
+          >
+            <Download size={15} /> הורד קובץ
+          </a>
+        ) : (
+          <p className="text-sm text-gray-400">הקובץ אינו זמין להורדה</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type OutputType = "report" | "presentation" | "spreadsheet" | "infographic" | "summary";
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
@@ -213,13 +260,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     load();
   };
 
-  // Upload text files
-  const handleTextUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    const textFiles = files.filter((f) => !isImage(f.type || ""));
-    const imageFiles = files.filter((f) => isImage(f.type || ""));
+  const uploadFiles = async (files: File[]) => {
+    const textFiles = files.filter((f) => !isImage(f.type || "") && !isBinary(f.type || ""));
+    const binaryFiles = files.filter((f) => isImage(f.type || "") || isBinary(f.type || ""));
 
-    // Text files via JSON
     for (const file of textFiles) {
       const content = await file.text();
       const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
@@ -230,43 +274,23 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       });
     }
 
-    // Image files via FormData
-    if (imageFiles.length > 0) {
+    if (binaryFiles.length > 0) {
       setUploading(true);
       const form = new FormData();
-      for (const f of imageFiles) form.append("file", f);
+      for (const f of binaryFiles) form.append("file", f);
       await fetch(`/api/projects/${id}/upload`, { method: "POST", body: form });
       setUploading(false);
     }
+  };
 
+  const handleTextUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    await uploadFiles(Array.from(e.target.files ?? []));
     load();
     e.target.value = "";
   };
 
-  // Upload folder (may contain images + text)
   const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    const textFiles = files.filter((f) => !isImage(f.type || ""));
-    const imageFiles = files.filter((f) => isImage(f.type || ""));
-
-    for (const file of textFiles) {
-      const content = await file.text();
-      const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-      await fetch(`/api/projects/${id}/documents`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: file.name, path: relativePath, content, mimeType: file.type || "text/plain" }),
-      });
-    }
-
-    if (imageFiles.length > 0) {
-      setUploading(true);
-      const form = new FormData();
-      for (const f of imageFiles) form.append("file", f);
-      await fetch(`/api/projects/${id}/upload`, { method: "POST", body: form });
-      setUploading(false);
-    }
-
+    await uploadFiles(Array.from(e.target.files ?? []));
     load();
     e.target.value = "";
   };
@@ -365,7 +389,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 multiple
                 className="hidden"
                 onChange={handleTextUpload}
-                accept=".txt,.md,.csv,.json,.html,image/*"
+                accept=".txt,.md,.csv,.json,.html,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.pdf,image/*"
               />
             </label>
             <label
@@ -414,9 +438,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   </span>
                 ))}
               </div>
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 overflow-hidden flex flex-col">
                 {isImage(selectedDoc.mimeType) && selectedDoc.fileUrl ? (
                   <ImageViewer doc={selectedDoc} />
+                ) : isBinary(selectedDoc.mimeType) ? (
+                  <BinaryViewer doc={selectedDoc} />
                 ) : (
                   <Editor
                     key={selectedDoc.id}

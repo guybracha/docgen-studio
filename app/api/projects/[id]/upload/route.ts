@@ -9,6 +9,19 @@ const IMAGE_TYPES = new Set([
   "image/webp", "image/svg+xml", "image/bmp", "image/tiff",
 ]);
 
+// Binary files that should be stored as files, not parsed as text
+const BINARY_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",       // xlsx
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // pptx
+  "application/msword",        // doc
+  "application/vnd.ms-excel",  // xls
+  "application/vnd.ms-powerpoint", // ppt
+  "application/pdf",
+  "application/zip",
+  "application/octet-stream",
+]);
+
 const IS_VERCEL = process.env.VERCEL === "1";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -29,7 +42,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
       const mimeType = file.type || "application/octet-stream";
-      if (!IMAGE_TYPES.has(mimeType)) continue;
+      if (!IMAGE_TYPES.has(mimeType) && !BINARY_TYPES.has(mimeType)) continue;
 
       const bytes = await file.arrayBuffer();
       const buffer = Buffer.from(bytes);
