@@ -39,3 +39,18 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/app/generated/prisma
+
+# database files
+*.db
+*.db-shm
+*.db-wal
+
+# uploaded files (stored locally, not in git)
+/public/uploads/
+
+# env (contains API keys)
+.env
+.env.local
+.env*.local
